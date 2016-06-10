@@ -57,9 +57,10 @@ typedef struct ALflangerState {
 
 static ALvoid ALflangerState_Destruct(ALflangerState *state)
 {
-    free(state->SampleBuffer[0]);
+    al_free(state->SampleBuffer[0]);
     state->SampleBuffer[0] = NULL;
     state->SampleBuffer[1] = NULL;
+    ALeffectState_Destruct(STATIC_CAST(ALeffectState,state));
 }
 
 static ALboolean ALflangerState_deviceUpdate(ALflangerState *state, ALCdevice *Device)
@@ -72,10 +73,10 @@ static ALboolean ALflangerState_deviceUpdate(ALflangerState *state, ALCdevice *D
 
     if(maxlen != state->BufferLength)
     {
-        void *temp;
-
-        temp = realloc(state->SampleBuffer[0], maxlen * sizeof(ALfloat) * 2);
+        void *temp = al_calloc(16, maxlen * sizeof(ALfloat) * 2);
         if(!temp) return AL_FALSE;
+
+        al_free(state->SampleBuffer[0]);
         state->SampleBuffer[0] = temp;
         state->SampleBuffer[1] = state->SampleBuffer[0] + maxlen;
 
@@ -91,14 +92,14 @@ static ALboolean ALflangerState_deviceUpdate(ALflangerState *state, ALCdevice *D
     return AL_TRUE;
 }
 
-static ALvoid ALflangerState_update(ALflangerState *state, const ALCdevice *Device, const ALeffectslot *Slot)
+static ALvoid ALflangerState_update(ALflangerState *state, const ALCdevice *Device, const ALeffectslot *Slot, const ALeffectProps *props)
 {
     ALfloat frequency = (ALfloat)Device->Frequency;
     ALfloat coeffs[MAX_AMBI_COEFFS];
     ALfloat rate;
     ALint phase;
 
-    switch(Slot->EffectProps.Flanger.Waveform)
+    switch(props->Flanger.Waveform)
     {
         case AL_FLANGER_WAVEFORM_TRIANGLE:
             state->waveform = FWF_Triangle;
@@ -107,18 +108,18 @@ static ALvoid ALflangerState_update(ALflangerState *state, const ALCdevice *Devi
             state->waveform = FWF_Sinusoid;
             break;
     }
-    state->depth = Slot->EffectProps.Flanger.Depth;
-    state->feedback = Slot->EffectProps.Flanger.Feedback;
-    state->delay = fastf2i(Slot->EffectProps.Flanger.Delay * frequency);
+    state->depth = props->Flanger.Depth;
+    state->feedback = props->Flanger.Feedback;
+    state->delay = fastf2i(props->Flanger.Delay * frequency);
 
     /* Gains for left and right sides */
-    CalcXYZCoeffs(-1.0f, 0.0f, 0.0f, coeffs);
-    ComputePanningGains(Device->Dry, coeffs, Slot->Gain, state->Gain[0]);
-    CalcXYZCoeffs( 1.0f, 0.0f, 0.0f, coeffs);
-    ComputePanningGains(Device->Dry, coeffs, Slot->Gain, state->Gain[1]);
+    CalcXYZCoeffs(-1.0f, 0.0f, 0.0f, 0.0f, coeffs);
+    ComputePanningGains(Device->Dry, coeffs, Slot->Params.Gain, state->Gain[0]);
+    CalcXYZCoeffs( 1.0f, 0.0f, 0.0f, 0.0f, coeffs);
+    ComputePanningGains(Device->Dry, coeffs, Slot->Params.Gain, state->Gain[1]);
 
-    phase = Slot->EffectProps.Flanger.Phase;
-    rate = Slot->EffectProps.Flanger.Rate;
+    phase = props->Flanger.Phase;
+    rate = props->Flanger.Rate;
     if(!(rate > 0.0f))
     {
         state->lfo_scale = 0.0f;

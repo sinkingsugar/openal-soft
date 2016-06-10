@@ -15,10 +15,12 @@ typedef struct ALnullState {
 
 
 /* This destructs (not free!) the effect state. It's called only when the
- * effect slot is no longer used.
+ * effect slot is no longer used. Make sure to call the parent Destruct
+ * function before returning!
  */
-static ALvoid ALnullState_Destruct(ALnullState* UNUSED(state))
+static ALvoid ALnullState_Destruct(ALnullState *state)
 {
+    ALeffectState_Destruct(STATIC_CAST(ALeffectState,state));
 }
 
 /* This updates the device-dependant effect state. This is called on
@@ -33,7 +35,7 @@ static ALboolean ALnullState_deviceUpdate(ALnullState* UNUSED(state), ALCdevice*
 /* This updates the effect state. This is called any time the effect is
  * (re)loaded into a slot.
  */
-static ALvoid ALnullState_update(ALnullState* UNUSED(state), const ALCdevice* UNUSED(device), const ALeffectslot* UNUSED(slot))
+static ALvoid ALnullState_update(ALnullState* UNUSED(state), const ALCdevice* UNUSED(device), const ALeffectslot* UNUSED(slot), const ALeffectProps* UNUSED(props))
 {
 }
 

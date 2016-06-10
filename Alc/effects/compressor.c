@@ -40,8 +40,9 @@ typedef struct ALcompressorState {
     ALfloat GainCtrl;
 } ALcompressorState;
 
-static ALvoid ALcompressorState_Destruct(ALcompressorState *UNUSED(state))
+static ALvoid ALcompressorState_Destruct(ALcompressorState *state)
 {
+    ALeffectState_Destruct(STATIC_CAST(ALeffectState,state));
 }
 
 static ALboolean ALcompressorState_deviceUpdate(ALcompressorState *state, ALCdevice *device)
@@ -55,12 +56,12 @@ static ALboolean ALcompressorState_deviceUpdate(ALcompressorState *state, ALCdev
     return AL_TRUE;
 }
 
-static ALvoid ALcompressorState_update(ALcompressorState *state, const ALCdevice *device, const ALeffectslot *slot)
+static ALvoid ALcompressorState_update(ALcompressorState *state, const ALCdevice *device, const ALeffectslot *slot, const ALeffectProps *props)
 {
     aluMatrixf matrix;
     ALuint i;
 
-    state->Enabled = slot->EffectProps.Compressor.OnOff;
+    state->Enabled = props->Compressor.OnOff;
 
     aluMatrixfSet(&matrix,
         1.0f, 0.0f, 0.0f, 0.0f,
@@ -72,7 +73,7 @@ static ALvoid ALcompressorState_update(ALcompressorState *state, const ALCdevice
     STATIC_CAST(ALeffectState,state)->OutBuffer = device->FOAOut.Buffer;
     STATIC_CAST(ALeffectState,state)->OutChannels = device->FOAOut.NumChannels;
     for(i = 0;i < 4;i++)
-        ComputeFirstOrderGains(device->FOAOut, matrix.m[i], slot->Gain,
+        ComputeFirstOrderGains(device->FOAOut, matrix.m[i], slot->Params.Gain,
                                state->Gain[i]);
 }
 

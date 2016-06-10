@@ -26,6 +26,7 @@
 #include "AL/al.h"
 #include "AL/alext.h"
 #include "alError.h"
+#include "alListener.h"
 #include "alSource.h"
 #include "alAuxEffectSlot.h"
 
@@ -51,18 +52,21 @@ AL_API ALvoid AL_APIENTRY alEnable(ALenum capability)
     context = GetContextRef();
     if(!context) return;
 
+    WriteLock(&context->PropLock);
     switch(capability)
     {
     case AL_SOURCE_DISTANCE_MODEL:
         context->SourceDistanceModel = AL_TRUE;
-        ATOMIC_STORE(&context->UpdateSources, AL_TRUE);
         break;
 
     default:
         SET_ERROR_AND_GOTO(context, AL_INVALID_ENUM, done);
     }
+    if(!ATOMIC_LOAD(&context->DeferUpdates, almemory_order_acquire))
+        UpdateAllSourceProps(context);
 
 done:
+    WriteUnlock(&context->PropLock);
     ALCcontext_DecRef(context);
 }
 
@@ -73,18 +77,21 @@ AL_API ALvoid AL_APIENTRY alDisable(ALenum capability)
     context = GetContextRef();
     if(!context) return;
 
+    WriteLock(&context->PropLock);
     switch(capability)
     {
     case AL_SOURCE_DISTANCE_MODEL:
         context->SourceDistanceModel = AL_FALSE;
-        ATOMIC_STORE(&context->UpdateSources, AL_TRUE);
         break;
 
     default:
         SET_ERROR_AND_GOTO(context, AL_INVALID_ENUM, done);
     }
+    if(!ATOMIC_LOAD(&context->DeferUpdates, almemory_order_acquire))
+        UpdateAllSourceProps(context);
 
 done:
+    WriteUnlock(&context->PropLock);
     ALCcontext_DecRef(context);
 }
 
@@ -143,7 +150,7 @@ AL_API ALboolean AL_APIENTRY alGetBoolean(ALenum pname)
         break;
 
     case AL_DEFERRED_UPDATES_SOFT:
-        value = context->DeferUpdates;
+        value = ATOMIC_LOAD(&context->DeferUpdates, almemory_order_acquire);
         break;
 
     default:
@@ -183,7 +190,7 @@ AL_API ALdouble AL_APIENTRY alGetDouble(ALenum pname)
         break;
 
     case AL_DEFERRED_UPDATES_SOFT:
-        value = (ALdouble)context->DeferUpdates;
+        value = (ALdouble)ATOMIC_LOAD(&context->DeferUpdates, almemory_order_acquire);
         break;
 
     default:
@@ -223,7 +230,7 @@ AL_API ALfloat AL_APIENTRY alGetFloat(ALenum pname)
         break;
 
     case AL_DEFERRED_UPDATES_SOFT:
-        value = (ALfloat)context->DeferUpdates;
+        value = (ALfloat)ATOMIC_LOAD(&context->DeferUpdates, almemory_order_acquire);
         break;
 
     default:
@@ -263,7 +270,7 @@ AL_API ALint AL_APIENTRY alGetInteger(ALenum pname)
         break;
 
     case AL_DEFERRED_UPDATES_SOFT:
-        value = (ALint)context->DeferUpdates;
+        value = (ALint)ATOMIC_LOAD(&context->DeferUpdates, almemory_order_acquire);
         break;
 
     default:
@@ -303,7 +310,7 @@ AL_API ALint64SOFT AL_APIENTRY alGetInteger64SOFT(ALenum pname)
         break;
 
     case AL_DEFERRED_UPDATES_SOFT:
-        value = (ALint64SOFT)context->DeferUpdates;
+        value = (ALint64SOFT)ATOMIC_LOAD(&context->DeferUpdates, almemory_order_acquire);
         break;
 
     default:
@@ -547,8 +554,14 @@ AL_API ALvoid AL_APIENTRY alDopplerFactor(ALfloat value)
     if(!(value >= 0.0f && isfinite(value)))
         SET_ERROR_AND_GOTO(context, AL_INVALID_VALUE, done);
 
+    WriteLock(&context->PropLock);
     context->DopplerFactor = value;
-    ATOMIC_STORE(&context->UpdateSources, AL_TRUE);
+    if(!ATOMIC_LOAD(&context->DeferUpdates, almemory_order_acquire))
+    {
+        UpdateListenerProps(context);
+        UpdateAllSourceProps(context);
+    }
+    WriteUnlock(&context->PropLock);
 
 done:
     ALCcontext_DecRef(context);
@@ -564,8 +577,14 @@ AL_API ALvoid AL_APIENTRY alDopplerVelocity(ALfloat value)
     if(!(value >= 0.0f && isfinite(value)))
         SET_ERROR_AND_GOTO(context, AL_INVALID_VALUE, done);
 
+    WriteLock(&context->PropLock);
     context->DopplerVelocity = value;
-    ATOMIC_STORE(&context->UpdateSources, AL_TRUE);
+    if(!ATOMIC_LOAD(&context->DeferUpdates, almemory_order_acquire))
+    {
+        UpdateListenerProps(context);
+        UpdateAllSourceProps(context);
+    }
+    WriteUnlock(&context->PropLock);
 
 done:
     ALCcontext_DecRef(context);
@@ -581,8 +600,14 @@ AL_API ALvoid AL_APIENTRY alSpeedOfSound(ALfloat value)
     if(!(value > 0.0f && isfinite(value)))
         SET_ERROR_AND_GOTO(context, AL_INVALID_VALUE, done);
 
+    WriteLock(&context->PropLock);
     context->SpeedOfSound = value;
-    ATOMIC_STORE(&context->UpdateSources, AL_TRUE);
+    if(!ATOMIC_LOAD(&context->DeferUpdates, almemory_order_acquire))
+    {
+        UpdateListenerProps(context);
+        UpdateAllSourceProps(context);
+    }
+    WriteUnlock(&context->PropLock);
 
 done:
     ALCcontext_DecRef(context);
@@ -601,9 +626,14 @@ AL_API ALvoid AL_APIENTRY alDistanceModel(ALenum value)
          value == AL_NONE))
         SET_ERROR_AND_GOTO(context, AL_INVALID_VALUE, done);
 
+    WriteLock(&context->PropLock);
     context->DistanceModel = value;
     if(!context->SourceDistanceModel)
-        ATOMIC_STORE(&context->UpdateSources, AL_TRUE);
+    {
+        if(!ATOMIC_LOAD(&context->DeferUpdates, almemory_order_acquire))
+            UpdateAllSourceProps(context);
+    }
+    WriteUnlock(&context->PropLock);
 
 done:
     ALCcontext_DecRef(context);

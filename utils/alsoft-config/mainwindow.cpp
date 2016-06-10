@@ -1,6 +1,7 @@
 
 #include "config.h"
 
+#include <iostream>
 #include <cmath>
 
 #include <QFileDialog>
@@ -277,7 +278,7 @@ MainWindow::MainWindow(QWidget *parent) :
     mPeriodCountValidator = new QIntValidator(2, 16, this);
     ui->periodCountEdit->setValidator(mPeriodCountValidator);
 
-    mSourceCountValidator = new QIntValidator(0, 256, this);
+    mSourceCountValidator = new QIntValidator(0, 4096, this);
     ui->srcCountLineEdit->setValidator(mSourceCountValidator);
     mEffectSlotValidator = new QIntValidator(0, 16, this);
     ui->effectSlotLineEdit->setValidator(mEffectSlotValidator);
@@ -1091,8 +1092,22 @@ void MainWindow::select71DecoderFile()
 { selectDecoderFile(ui->decoder71LineEdit, "Select 7.1 Surround Decoder");}
 void MainWindow::selectDecoderFile(QLineEdit *line, const char *caption)
 {
+    QString dir = line->text();
+    if(dir.isEmpty() || QDir::isRelativePath(dir))
+    {
+        QStringList paths = getAllDataPaths("/openal/presets");
+        while(!paths.isEmpty())
+        {
+            if(QDir(paths.last()).exists())
+            {
+                dir = paths.last();
+                break;
+            }
+            paths.removeLast();
+        }
+    }
     QString fname = QFileDialog::getOpenFileName(this, tr(caption),
-        line->text(), tr("AmbDec Files (*.ambdec);;All Files (*.*)")
+        dir, tr("AmbDec Files (*.ambdec);;All Files (*.*)")
     );
     if(!fname.isEmpty())
     {

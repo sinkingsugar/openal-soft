@@ -321,6 +321,57 @@ static int StringSortCompare(const void *str1, const void *str2)
 
 #ifdef _WIN32
 
+static WCHAR *strrchrW(WCHAR *str, WCHAR ch)
+{
+    WCHAR *ret = NULL;
+    while(*str)
+    {
+        if(*str == ch)
+            ret = str;
+        ++str;
+    }
+    return ret;
+}
+
+al_string GetProcPath(void)
+{
+    al_string ret = AL_STRING_INIT_STATIC();
+    WCHAR *pathname, *sep;
+    DWORD pathlen;
+    DWORD len;
+
+    pathlen = 256;
+    pathname = malloc(pathlen * sizeof(pathname[0]));
+    while(pathlen > 0 && (len=GetModuleFileNameW(NULL, pathname, pathlen)) == pathlen)
+    {
+        free(pathname);
+        pathlen <<= 1;
+        pathname = malloc(pathlen * sizeof(pathname[0]));
+    }
+    if(len == 0)
+    {
+        free(pathname);
+        ERR("Failed to get process name: error %lu\n", GetLastError());
+        return ret;
+    }
+
+    pathname[len] = 0;
+    if((sep = strrchrW(pathname, '\\')))
+    {
+        WCHAR *sep2 = strrchrW(pathname, '/');
+        if(sep2) *sep2 = 0;
+        else *sep = 0;
+    }
+    else if((sep = strrchrW(pathname, '/')))
+        *sep = 0;
+    al_string_copy_wcstr(&ret, pathname);
+    free(pathname);
+
+    TRACE("Got: %s\n", al_string_get_cstr(ret));
+    return ret;
+}
+
+
 static WCHAR *FromUTF8(const char *str)
 {
     WCHAR *out = NULL;
@@ -549,6 +600,52 @@ vector_al_string SearchDataFiles(const char *ext, const char *subdir)
 
 #else
 
+al_string GetProcPath(void)
+{
+    al_string ret = AL_STRING_INIT_STATIC();
+    const char *fname;
+    char *pathname, *sep;
+    size_t pathlen;
+    ssize_t len;
+
+    pathlen = 256;
+    pathname = malloc(pathlen);
+
+    fname = "/proc/self/exe";
+    len = readlink(fname, pathname, pathlen);
+    if(len == -1 && errno == ENOENT)
+    {
+        fname = "/proc/self/file";
+        len = readlink(fname, pathname, pathlen);
+    }
+
+    while(len > 0 && (size_t)len == pathlen)
+    {
+        free(pathname);
+        pathlen <<= 1;
+        pathname = malloc(pathlen);
+        len = readlink(fname, pathname, pathlen);
+    }
+    if(len <= 0)
+    {
+        free(pathname);
+        ERR("Failed to link %s: %s\n", fname, strerror(errno));
+        return ret;
+    }
+
+    pathname[len] = 0;
+    sep = strrchr(pathname, '/');
+    if(sep)
+        al_string_copy_range(&ret, pathname, sep);
+    else
+        al_string_copy_cstr(&ret, pathname);
+    free(pathname);
+
+    TRACE("Got: %s\n", al_string_get_cstr(ret));
+    return ret;
+}
+
+
 #ifdef HAVE_DLFCN_H
 
 void *LoadLib(const char *name)
@@ -759,9 +856,12 @@ ALboolean vector_reserve(char *ptr, size_t base_size, size_t obj_size, size_t ob
         /* Need to be explicit with the caller type's base size, because it
          * could have extra padding before the start of the array (that is,
          * sizeof(*vector_) may not equal base_size). */
-        temp = realloc(*vecptr, base_size + obj_size*obj_count);
+        temp = al_calloc(16, base_size + obj_size*obj_count);
         if(temp == NULL) return AL_FALSE;
+        memcpy(((ALubyte*)temp)+base_size, ((ALubyte*)*vecptr)+base_size,
+               obj_size*old_size);
 
+        al_free(*vecptr);
         *vecptr = temp;
         (*vecptr)->Capacity = obj_count;
         (*vecptr)->Size = old_size;
@@ -777,35 +877,6 @@ ALboolean vector_resize(char *ptr, size_t base_size, size_t obj_size, size_t obj
         if(!vector_reserve((char*)vecptr, base_size, obj_size, obj_count, AL_TRUE))
             return AL_FALSE;
         (*vecptr)->Size = obj_count;
-    }
-    return AL_TRUE;
-}
-
-ALboolean vector_insert(char *ptr, size_t base_size, size_t obj_size, void *ins_pos, const void *datstart, const void *datend)
-{
-    vector_ *vecptr = (vector_*)ptr;
-    if(datstart != datend)
-    {
-        ptrdiff_t ins_elem = (*vecptr ? ((char*)ins_pos - ((char*)(*vecptr) + base_size)) :
-                                        ((char*)ins_pos - (char*)NULL)) /
-                             obj_size;
-        ptrdiff_t numins = ((const char*)datend - (const char*)datstart) / obj_size;
-
-        assert(numins > 0);
-        if((size_t)numins + VECTOR_SIZE(*vecptr) < (size_t)numins ||
-           !vector_reserve((char*)vecptr, base_size, obj_size, VECTOR_SIZE(*vecptr)+numins, AL_TRUE))
-            return AL_FALSE;
-
-        /* NOTE: ins_pos may have been invalidated if *vecptr moved. Use ins_elem instead. */
-        if((size_t)ins_elem < (*vecptr)->Size)
-        {
-            memmove((char*)(*vecptr) + base_size + ((ins_elem+numins)*obj_size),
-                    (char*)(*vecptr) + base_size + ((ins_elem       )*obj_size),
-                    ((*vecptr)->Size-ins_elem)*obj_size);
-        }
-        memcpy((char*)(*vecptr) + base_size + (ins_elem*obj_size),
-               datstart, numins*obj_size);
-        (*vecptr)->Size += numins;
     }
     return AL_TRUE;
 }
@@ -856,27 +927,36 @@ int al_string_cmp_cstr(const_al_string str1, const al_string_char_type *str2)
 void al_string_copy(al_string *str, const_al_string from)
 {
     size_t len = al_string_length(from);
+    size_t i;
+
     VECTOR_RESERVE(*str, len+1);
-    VECTOR_RESIZE(*str, 0);
-    VECTOR_INSERT(*str, VECTOR_END(*str), VECTOR_BEGIN(from), VECTOR_BEGIN(from)+len);
+    VECTOR_RESIZE(*str, len);
+    for(i = 0;i < len;i++)
+        VECTOR_ELEM(*str, i) = VECTOR_ELEM(from, i);
     *VECTOR_END(*str) = 0;
 }
 
 void al_string_copy_cstr(al_string *str, const al_string_char_type *from)
 {
     size_t len = strlen(from);
+    size_t i;
+
     VECTOR_RESERVE(*str, len+1);
-    VECTOR_RESIZE(*str, 0);
-    VECTOR_INSERT(*str, VECTOR_END(*str), from, from+len);
+    VECTOR_RESIZE(*str, len);
+    for(i = 0;i < len;i++)
+        VECTOR_ELEM(*str, i) = from[i];
     *VECTOR_END(*str) = 0;
 }
 
 void al_string_copy_range(al_string *str, const al_string_char_type *from, const al_string_char_type *to)
 {
     size_t len = to - from;
+    size_t i;
+
     VECTOR_RESERVE(*str, len+1);
-    VECTOR_RESIZE(*str, 0);
-    VECTOR_INSERT(*str, VECTOR_END(*str), from, to);
+    VECTOR_RESIZE(*str, len);
+    for(i = 0;i < len;i++)
+        VECTOR_ELEM(*str, i) = from[i];
     *VECTOR_END(*str) = 0;
 }
 
@@ -892,8 +972,13 @@ void al_string_append_cstr(al_string *str, const al_string_char_type *from)
     size_t len = strlen(from);
     if(len != 0)
     {
-        VECTOR_RESERVE(*str, al_string_length(*str)+len+1);
-        VECTOR_INSERT(*str, VECTOR_END(*str), from, from+len);
+        size_t base = al_string_length(*str);
+        size_t i;
+
+        VECTOR_RESERVE(*str, base+len+1);
+        VECTOR_RESIZE(*str, base+len);
+        for(i = 0;i < len;i++)
+            VECTOR_ELEM(*str, base+i) = from[i];
         *VECTOR_END(*str) = 0;
     }
 }
@@ -902,8 +987,14 @@ void al_string_append_range(al_string *str, const al_string_char_type *from, con
 {
     if(to != from)
     {
-        VECTOR_RESERVE(*str, al_string_length(*str)+(to-from)+1);
-        VECTOR_INSERT(*str, VECTOR_END(*str), from, to);
+        size_t base = al_string_length(*str);
+        size_t len = to - from;
+        size_t i;
+
+        VECTOR_RESERVE(*str, base+len+1);
+        VECTOR_RESIZE(*str, base+len);
+        for(i = 0;i < len;i++)
+            VECTOR_ELEM(*str, base+i) = from[i];
         *VECTOR_END(*str) = 0;
     }
 }

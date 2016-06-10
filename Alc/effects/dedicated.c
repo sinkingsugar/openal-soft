@@ -36,8 +36,9 @@ typedef struct ALdedicatedState {
 } ALdedicatedState;
 
 
-static ALvoid ALdedicatedState_Destruct(ALdedicatedState *UNUSED(state))
+static ALvoid ALdedicatedState_Destruct(ALdedicatedState *state)
 {
+    ALeffectState_Destruct(STATIC_CAST(ALeffectState,state));
 }
 
 static ALboolean ALdedicatedState_deviceUpdate(ALdedicatedState *UNUSED(state), ALCdevice *UNUSED(device))
@@ -45,7 +46,7 @@ static ALboolean ALdedicatedState_deviceUpdate(ALdedicatedState *UNUSED(state), 
     return AL_TRUE;
 }
 
-static ALvoid ALdedicatedState_update(ALdedicatedState *state, const ALCdevice *device, const ALeffectslot *Slot)
+static ALvoid ALdedicatedState_update(ALdedicatedState *state, const ALCdevice *device, const ALeffectslot *Slot, const ALeffectProps *props)
 {
     ALfloat Gain;
     ALuint i;
@@ -53,8 +54,8 @@ static ALvoid ALdedicatedState_update(ALdedicatedState *state, const ALCdevice *
     for(i = 0;i < MAX_OUTPUT_CHANNELS;i++)
         state->gains[i] = 0.0f;
 
-    Gain = Slot->Gain * Slot->EffectProps.Dedicated.Gain;
-    if(Slot->EffectType == AL_EFFECT_DEDICATED_LOW_FREQUENCY_EFFECT)
+    Gain = Slot->Params.Gain * props->Dedicated.Gain;
+    if(Slot->Params.EffectType == AL_EFFECT_DEDICATED_LOW_FREQUENCY_EFFECT)
     {
         int idx;
         if((idx=GetChannelIdxByName(device->RealOut, LFE)) != -1)
@@ -64,7 +65,7 @@ static ALvoid ALdedicatedState_update(ALdedicatedState *state, const ALCdevice *
             state->gains[idx] = Gain;
         }
     }
-    else if(Slot->EffectType == AL_EFFECT_DEDICATED_DIALOGUE)
+    else if(Slot->Params.EffectType == AL_EFFECT_DEDICATED_DIALOGUE)
     {
         int idx;
         /* Dialog goes to the front-center speaker if it exists, otherwise it
@@ -77,16 +78,12 @@ static ALvoid ALdedicatedState_update(ALdedicatedState *state, const ALCdevice *
         }
         else
         {
+            ALfloat coeffs[MAX_AMBI_COEFFS];
+            CalcXYZCoeffs(0.0f, 0.0f, -1.0f, 0.0f, coeffs);
+
             STATIC_CAST(ALeffectState,state)->OutBuffer = device->Dry.Buffer;
             STATIC_CAST(ALeffectState,state)->OutChannels = device->Dry.NumChannels;
-            if((idx=GetChannelIdxByName(device->Dry, FrontCenter)) != -1)
-                state->gains[idx] = Gain;
-            else
-            {
-                ALfloat coeffs[MAX_AMBI_COEFFS];
-                CalcXYZCoeffs(0.0f, 0.0f, -1.0f, coeffs);
-                ComputePanningGains(device->Dry, coeffs, Gain, state->gains);
-            }
+            ComputePanningGains(device->Dry, coeffs, Gain, state->gains);
         }
     }
 }
